@@ -3,7 +3,7 @@
 // API 키는 절대 이 파일에 직접 쓰지 않는다 — Netlify 대시보드의
 // Site settings > Environment variables 에 GEMINI_API_KEY 라는 이름으로만 등록한다.
 
-const GEMINI_MODEL = 'gemini-3.5-flash'; // 가볍고 빠른 모델. 필요시 다른 flash 계열로 교체 가능.
+const GEMINI_MODEL = 'gemini-3.1-flash-lite'; // 가볍고 빠른 모델 — 혼잡(고수요) 오류가 상대적으로 적음.
 
 const SYSTEM_PROMPT = `
 너는 사회복지공동모금회 해외지원사업(사랑의열매 해외지원사업, KCOC 파트너십지원부)의 신규 공모 안내를 담당하는 상담 챗봇이다.
@@ -112,7 +112,7 @@ exports.handler = async function (event) {
 
   const contents = [...trimmedHistory, { role: 'user', parts: [{ text: message }] }];
 
-  try {
+  const callGemini = async () => {
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       {
@@ -132,16 +132,36 @@ exports.handler = async function (event) {
         }),
       }
     );
-
     const data = await resp.json();
+    return { ok: resp.ok, status: resp.status, data };
+  };
 
-    if (!resp.ok) {
-      const msg = (data && data.error && data.error.message) || 'Gemini API 호출 중 오류가 발생했습니다.';
-      return { statusCode: resp.status, headers, body: JSON.stringify({ error: msg }) };
+  // 구글 서버 혼잡(고수요/503류) 오류는 자주 일시적이므로, 최대 2번까지 짧은 대기 후 재시도한다.
+  const isOverloaded = (r) => {
+    if (r.ok) return false;
+    const msg = ((r.data && r.data.error && r.data.error.message) || '').toLowerCase();
+    return r.status === 503 || r.status === 429 || msg.includes('overloaded') || msg.includes('high demand');
+  };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  try {
+    let result = await callGemini();
+    let attempt = 1;
+    while (isOverloaded(result) && attempt < 3) {
+      await sleep(600 * attempt);
+      result = await callGemini();
+      attempt += 1;
+    }
+
+    if (!result.ok) {
+      const msg =
+        (result.data && result.data.error && result.data.error.message) ||
+        'Gemini API 호출 중 오류가 발생했습니다.';
+      return { statusCode: result.status, headers, body: JSON.stringify({ error: msg }) };
     }
 
     const answer =
-      data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ||
+      result.data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ||
       '문의하신 내용과 관련된 자료를 찾을 수 없습니다. 정확한 안내를 위해 KCOC 파트너십지원부(pnd@ngokcoc.or.kr)로 문의해 주세요.';
 
     return { statusCode: 200, headers, body: JSON.stringify({ answer }) };
