@@ -14,6 +14,7 @@ const SYSTEM_PROMPT = `
 - 질문이 문서 범위를 벗어나거나 답을 확신할 수 없는 경우, 반드시 다음과 같이 답하라: "문의하신 내용과 관련된 자료를 찾을 수 없습니다. 정확한 안내를 위해 KCOC 파트너십지원부(이메일: pnd@ngokcoc.or.kr, 전화: 070-4893-0717 / 070-7477-1077)로 문의해 주세요."
 - 사업과 무관한 질문, 개인정보를 묻는 질문에는 답하지 말고 위 문의처 안내로 대신하라.
 - 친절하고 간결한 존댓말로 답하라. 이모지는 과하지 않게 사용하라.
+- 답변은 보통 3~6문장 이내로 간결하게 작성하라. 불필요하게 길게 늘어놓지 마라.
 
 [참고 문서 — 사랑의열매 해외지원사업 공모 안내 (매년 공고되며 핵심 내용은 유지, 연도·세부 수치만 갱신됨)]
 
@@ -123,7 +124,11 @@ exports.handler = async function (event) {
         body: JSON.stringify({
           system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 700 },
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 2048,
+            thinkingConfig: { thinkingLevel: 'minimal' },
+          },
         }),
       }
     );
