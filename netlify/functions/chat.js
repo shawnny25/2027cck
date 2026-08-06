@@ -3,6 +3,19 @@
 // API 키는 절대 이 파일에 직접 쓰지 않는다 — Netlify 대시보드의
 // Site settings > Environment variables 에 GEMINI_API_KEY 라는 이름으로만 등록한다.
 
+const { getStore } = require('@netlify/blobs');
+
+// 질문 내용만(개인 식별 정보 없이) 익명으로 기록한다. 실패해도 챗봇 응답에는 영향을 주지 않는다.
+async function logQuestion(message) {
+  try {
+    const store = getStore('chat-logs');
+    const key = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await store.setJSON(key, { time: new Date().toISOString(), message });
+  } catch (e) {
+    console.error('question log failed:', e && e.message);
+  }
+}
+
 const GEMINI_MODEL = 'gemini-3.1-flash-lite'; // 가볍고 빠른 모델 — 혼잡(고수요) 오류가 상대적으로 적음.
 
 const SYSTEM_PROMPT = `
@@ -94,6 +107,8 @@ exports.handler = async function (event) {
   if (!message) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: '질문을 입력해 주세요.' }) };
   }
+
+  await logQuestion(message);
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
