@@ -3,7 +3,7 @@
 // API 키는 절대 이 파일에 직접 쓰지 않는다 — Netlify 대시보드의
 // Site settings > Environment variables 에 GEMINI_API_KEY 라는 이름으로만 등록한다.
 
-const { getStore } = require('@netlify/blobs');
+const { getStore, connectLambda } = require('@netlify/blobs');
 
 // 질문 내용만(개인 식별 정보 없이) 익명으로 기록한다. 실패해도 챗봇 응답에는 영향을 주지 않는다.
 async function logQuestion(message) {
@@ -128,6 +128,8 @@ const SYSTEM_PROMPT = `
 `.trim();
 
 exports.handler = async function (event) {
+  connectLambda(event); // Netlify Blobs를 이 함수(Lambda 호환 모드)에서 쓰려면 반드시 가장 먼저 호출해야 함
+
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
