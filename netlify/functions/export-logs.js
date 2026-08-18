@@ -5,7 +5,7 @@
 // LOG_EXPORT_KEY 라는 이름으로 본인이 정한 비밀번호(영문+숫자 조합 추천)를 등록해야 한다.
 // (chat.js의 GEMINI_API_KEY 등록했던 것과 같은 화면, 같은 방법)
 
-const { getStore } = require('@netlify/blobs');
+const { getStore, connectLambda } = require('@netlify/blobs');
 
 function escapeHtml(s) {
   return String(s)
@@ -20,6 +20,8 @@ function escapeCsv(s) {
 }
 
 exports.handler = async function (event) {
+  connectLambda(event); // Netlify Blobs를 이 함수(Lambda 호환 모드)에서 쓰려면 반드시 가장 먼저 호출해야 함
+
   const params = event.queryStringParameters || {};
   const requiredKey = process.env.LOG_EXPORT_KEY;
 
