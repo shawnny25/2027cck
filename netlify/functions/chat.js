@@ -5,14 +5,20 @@
 
 const { getStore, connectLambda } = require('@netlify/blobs');
 
-// 질문 내용만(개인 식별 정보 없이) 익명으로 기록한다. 실패해도 챗봇 응답에는 영향을 주지 않는다.
-async function logQuestion(message) {
+// 질문 + 챗봇이 실제로 준 답변을 함께(개인 식별 정보 없이) 익명으로 기록한다.
+// 실패해도 챗봇 응답 자체에는 영향을 주지 않는다.
+async function logInteraction(message, answer, isError) {
   try {
     const store = getStore('chat-logs');
     const key = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await store.setJSON(key, { time: new Date().toISOString(), message });
+    await store.setJSON(key, {
+      time: new Date().toISOString(),
+      message,
+      answer: answer || '',
+      error: !!isError,
+    });
   } catch (e) {
-    console.error('question log failed:', e && e.message);
+    console.error('interaction log failed:', e && e.message);
   }
 }
 
@@ -156,15 +162,11 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: '질문을 입력해 주세요.' }) };
   }
 
-  await logQuestion(message);
-
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: '서버에 GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Netlify 사이트 설정에서 등록해 주세요.' }),
-    };
+    const errMsg = '서버에 GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Netlify 사이트 설정에서 등록해 주세요.';
+    await logInteraction(message, errMsg, true);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: errMsg }) };
   }
 
   // 최근 대화 이력을 Gemini 형식으로 변환 (최근 10턴만 유지해 과금/컨텍스트 절약)
@@ -220,6 +222,7 @@ exports.handler = async function (event) {
       const msg =
         (result.data && result.data.error && result.data.error.message) ||
         'Gemini API 호출 중 오류가 발생했습니다.';
+      await logInteraction(message, msg, true);
       return { statusCode: result.status, headers, body: JSON.stringify({ error: msg }) };
     }
 
@@ -227,8 +230,11 @@ exports.handler = async function (event) {
       result.data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ||
       '문의하신 내용과 관련된 자료를 찾을 수 없습니다. 정확한 안내를 위해 KCOC 파트너십지원부(pnd@ngokcoc.or.kr)로 문의해 주세요.';
 
+    await logInteraction(message, answer, false);
     return { statusCode: 200, headers, body: JSON.stringify({ answer }) };
   } catch (err) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: err.message || '알 수 없는 오류가 발생했습니다.' }) };
+    const errMsg = err.message || '알 수 없는 오류가 발생했습니다.';
+    await logInteraction(message, errMsg, true);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: errMsg }) };
   }
 };
