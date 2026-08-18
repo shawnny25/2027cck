@@ -1,5 +1,5 @@
 // Netlify Function: /.netlify/functions/export-logs
-// 챗봇에 들어온 질문 로그(Netlify Blobs 'chat-logs' 스토어)를 모아서 보여주는 관리자 전용 페이지.
+// 챗봇에 들어온 질문 + 챗봇이 실제로 준 답변을 모아서 보여주는 관리자 전용 페이지.
 // 아무나 볼 수 없도록 비밀 키(LOG_EXPORT_KEY)를 주소 끝의 ?key=... 로 확인한다.
 // 사용 전 Netlify 대시보드 > Site configuration > Environment variables 에
 // LOG_EXPORT_KEY 라는 이름으로 본인이 정한 비밀번호(영문+숫자 조합 추천)를 등록해야 한다.
@@ -58,10 +58,19 @@ exports.handler = async function (event) {
     };
   }
 
+  const errorCount = rows.filter((r) => r.error).length;
   const format = params.format === 'csv' ? 'csv' : 'html';
 
   if (format === 'csv') {
-    const csv = ['시간,질문', ...rows.map((r) => `${escapeCsv(r.time)},${escapeCsv(r.message)}`)].join('\n');
+    const csv = [
+      '시간,질문,챗봇 답변,오류여부',
+      ...rows.map(
+        (r) =>
+          `${escapeCsv(r.time)},${escapeCsv(r.message)},${escapeCsv(r.answer || '(답변 기록 없음)')},${
+            r.error ? '오류' : '정상'
+          }`
+      ),
+    ].join('\n');
     return {
       statusCode: 200,
       headers: {
@@ -73,10 +82,18 @@ exports.handler = async function (event) {
   }
 
   const tableRows = rows
-    .map(
-      (r) =>
-        `<tr><td>${escapeHtml(new Date(r.time).toLocaleString('ko-KR'))}</td><td>${escapeHtml(r.message)}</td></tr>`
-    )
+    .map((r) => {
+      const answerText = r.answer ? escapeHtml(r.answer) : '<span class="muted">(답변 기록 없음 — connectLambda 수정 전 로그)</span>';
+      const statusBadge = r.error
+        ? '<span class="badge badge-error">오류</span>'
+        : '<span class="badge badge-ok">정상</span>';
+      return `<tr class="${r.error ? 'row-error' : ''}">
+        <td>${escapeHtml(new Date(r.time).toLocaleString('ko-KR'))}</td>
+        <td>${statusBadge}</td>
+        <td>${escapeHtml(r.message)}</td>
+        <td>${answerText}</td>
+      </tr>`;
+    })
     .join('');
 
   const html = `<!DOCTYPE html>
@@ -84,7 +101,7 @@ exports.handler = async function (event) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>챗봇 질문 로그</title>
+<title>챗봇 질문·답변 로그</title>
 <style>
   body{font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif;padding:24px;background:#f4f5f7;color:#1f2328;}
   h1{font-size:19px;margin:0 0 4px;}
@@ -92,20 +109,26 @@ exports.handler = async function (event) {
   .btn{display:inline-block;margin-bottom:16px;padding:8px 16px;background:#e2231a;color:#fff;
        text-decoration:none;border-radius:8px;font-size:13px;font-weight:600;}
   .btn:hover{background:#b81a13;}
-  table{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);}
-  th,td{border:1px solid #e5e7eb;padding:9px 12px;font-size:13.5px;text-align:left;vertical-align:top;}
+  table{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);table-layout:fixed;}
+  th,td{border:1px solid #e5e7eb;padding:9px 12px;font-size:13.5px;text-align:left;vertical-align:top;word-break:break-word;}
   th{background:#f7941e;color:#fff;position:sticky;top:0;}
-  td:first-child{white-space:nowrap;color:#6b7280;width:170px;}
+  td:first-child,th:first-child{white-space:nowrap;color:#6b7280;width:150px;}
+  th:nth-child(2),td:nth-child(2){width:70px;}
   tr:nth-child(even){background:#fafafa;}
+  tr.row-error{background:#fff4f4;}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;}
+  .badge-ok{background:#e6f4ea;color:#1e7e34;}
+  .badge-error{background:#fde8e8;color:#b81a13;}
+  .muted{color:#9ca3af;font-style:italic;}
 </style>
 </head>
 <body>
-  <h1>챗봇 질문 로그 (총 ${rows.length}건)</h1>
-  <div class="meta">최근 질문 순으로 정렬되어 있습니다. 개인정보 없이 질문 내용과 시간만 저장됩니다.</div>
+  <h1>챗봇 질문·답변 로그 (총 ${rows.length}건, 오류 ${errorCount}건)</h1>
+  <div class="meta">최근 순 정렬. 개인정보 없이 질문·답변 내용과 시간만 저장됩니다. 오류로 표시된 항목은 챗봇이 정상 답변을 주지 못한 경우입니다.</div>
   <a class="btn" href="?key=${encodeURIComponent(params.key)}&format=csv">⬇ CSV로 다운로드 (엑셀에서 열기)</a>
   <table>
-    <thead><tr><th>시간</th><th>질문 내용</th></tr></thead>
-    <tbody>${tableRows || '<tr><td colspan="2">아직 기록된 질문이 없습니다.</td></tr>'}</tbody>
+    <thead><tr><th>시간</th><th>상태</th><th>질문 내용</th><th>챗봇 답변</th></tr></thead>
+    <tbody>${tableRows || '<tr><td colspan="4">아직 기록된 질문이 없습니다.</td></tr>'}</tbody>
   </table>
 </body>
 </html>`;
