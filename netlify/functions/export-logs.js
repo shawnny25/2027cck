@@ -66,7 +66,7 @@ exports.handler = async function (event) {
       '시간,질문,챗봇 답변,오류여부',
       ...rows.map(
         (r) =>
-          `${escapeCsv(r.time)},${escapeCsv(r.message)},${escapeCsv(r.answer || '(답변 기록 없음)')},${
+          `${escapeCsv(new Date(r.time).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }))},${escapeCsv(r.message)},${escapeCsv(r.answer || '(답변 기록 없음)')},${
             r.error ? '오류' : '정상'
           }`
       ),
@@ -88,7 +88,7 @@ exports.handler = async function (event) {
         ? '<span class="badge badge-error">오류</span>'
         : '<span class="badge badge-ok">정상</span>';
       return `<tr class="${r.error ? 'row-error' : ''}">
-        <td>${escapeHtml(new Date(r.time).toLocaleString('ko-KR'))}</td>
+        <td>${escapeHtml(new Date(r.time).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }))}</td>
         <td>${statusBadge}</td>
         <td>${escapeHtml(r.message)}</td>
         <td>${answerText}</td>
