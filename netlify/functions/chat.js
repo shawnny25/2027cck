@@ -1,28 +1,35 @@
-// Netlify Function: /.netlify/functions/chat
-// Gemini API를 호출해 국제 나눔파트너십 지원사업(구 사랑의열매 해외지원사업) 공모 문의에 답하는 서버리스 함수.
-// API 키는 절대 이 파일에 직접 쓰지 않는다 — Netlify 대시보드의
-// Site settings > Environment variables 에 GEMINI_API_KEY 라는 이름으로만 등록한다.
+// Vercel Serverless Function: /api/chat
+// Gemini API를 호출해 국제 나눔파트너십 지원사업(구 사랑의열매 해외지원사업) 공모 문의에 답하는 함수.
+// (Netlify -> Vercel 이전, 2026-09-04) API 키는 절대 이 파일에 직접 쓰지 않는다 — Vercel 프로젝트의
+// Settings > Environment Variables 에 GEMINI_API_KEY 라는 이름으로만 등록한다.
 
-const { getStore, connectLambda } = require('@netlify/blobs');
+const { put } = require('@vercel/blob');
 
 // 질문 + 챗봇이 실제로 준 답변을 함께(개인 식별 정보 없이) 익명으로 기록한다.
 // 실패해도 챗봇 응답 자체에는 영향을 주지 않는다.
 async function logInteraction(message, answer, isError) {
   try {
-    const store = getStore('chat-logs');
-    const key = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await store.setJSON(key, {
-      time: new Date().toISOString(),
-      message,
-      answer: answer || '',
-      error: !!isError,
-    });
+    const key = `chat-logs/q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+    // 스토어가 Private로 생성되어 있으므로 반드시 access:'private'로 써야 함(public으로 쓰면 에러남).
+    await put(
+      key,
+      JSON.stringify({
+        time: new Date().toISOString(),
+        message,
+        answer: answer || '',
+        error: !!isError,
+      }),
+      { access: 'private', addRandomSuffix: false, contentType: 'application/json' }
+    );
   } catch (e) {
     console.error('interaction log failed:', e && e.message);
   }
 }
 
-const GEMINI_MODEL = 'gemini-3.1-flash-lite'; // 가볍고 빠른 모델 — 혼잡(고수요) 오류가 상대적으로 적음.
+const GEMINI_MODEL = 'gemini-3.1-flash-lite'; // 기본 모델 — 가볍고 빠름.
+// 기본 모델이 혼잡(503/429 "high demand")하면 순서대로 시도할 예비 모델.
+// 모델마다 서버 용량이 따로라서, 한 모델이 혼잡해도 다른 모델은 정상인 경우가 많다.
+const FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-2.5-flash'];
 
 const SYSTEM_PROMPT = `
 너는 사회복지공동모금회 해외지원사업(2027년 기준 사업명: 국제 나눔파트너십 지원사업 — 예전 명칭 "사랑의열매 해외지원사업"과 동일 계열의 사업, KCOC 파트너십지원부)의 신규 공모 안내를 담당하는 상담 챗봇이다.
@@ -156,46 +163,57 @@ const SYSTEM_PROMPT = `
 - 자부담 사항 예시: 인건비 신청 시 4대보험 사용자부담금은 자부담 항목
 - 단년도(1년) 사업은 사업기간이 1년 미만이라 근로기준법상 퇴직금 지급 요건(1년 이상 연속근무)을 충족하지 못해, 수행 인력의 퇴직금 적립·지급이 불가함
 - 현지 회계법인을 통한 회계평가도 가능하나, 사회복지공동모금회가 정한 회계평가 기준에 따라야 하고 관련 비용은 사업예산에 편성해야 하며, 사전에 KCOC와 협의 필요
+- 고시환율(환율 적용 기준): 사업계획서 예산 편성 시 달러화 또는 현지화로 지출 예정인 예산은 작성 시점의 고시환율 또는 가장 최근의 정부 고시환율을 일괄 적용해 편성한다. 정산 시에는 실제 송금 및 환전 당시의 환율을 적용한다. 환율 참고 사이트: 관세청(www.customs.go.kr), 하나은행(www.kebhana.com)
+
+[양식 작성 — 배분신청서·예산편성표]
+- 배분신청서(양식 1페이지) 사업비 작성법: '총사업비' 란에는 신청금액 + 자부담금액을 더한 값을, '신청금액' 란에는 사회복지공동모금회에 신청할 사업비만 적는다. 그 아래 '신청금액 세부내역'은 신청금액을 기준으로 각 사업비가 얼마이고 신청금액 대비 몇 %인지 적는다
+- 예산편성표(양식 21페이지)의 '예산조달 계획' 작성법: 신청금액과 자부담 금액을 분리해서 기재한다. 비율은 각각 신청금액을 기준으로 계산한다
+  예) 신청금액이 100만원이고 신청금액으로 편성된 인건비가 10만원이면 비율은 10%. 신청금액 외에 추가로 필요한 인건비 5만원을 자부담으로 처리하면, 자부담으로 편성된 인건비 비율은 5%
+- 작성 후 확인: 예산조달 계획표의 신청금액 합산액과 자부담 합산액이 배분신청서(1페이지)에 기입한 신청금액·자부담 금액과 각각 일치하는지 반드시 확인한다
 
 [사업기간]
 - 사업기간은 단년도(1년)·다년도(3년) 두 가지만 가능하며, 2년·4년 등 다른 기간은 선택 불가
 - 다년도 사업은 단순 반복이나 대상 인원 확장에 그치지 않고, 3년간의 발전적인 변화가 구성되어야 하며 지원 종료 이후의 현지 사업관리계획·출구전략까지 포함해 기획해야 함
 `.trim();
 
-exports.handler = async function (event) {
-  connectLambda(event); // Netlify Blobs를 이 함수(Lambda 호환 모드)에서 쓰려면 반드시 가장 먼저 호출해야 함
+module.exports = async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const headers = {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers };
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
   }
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(event.body || '{}');
-  } catch (e) {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: '잘못된 요청입니다.' }) };
+  let payload = req.body;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch (e) {
+      res.status(400).json({ error: '잘못된 요청입니다.' });
+      return;
+    }
   }
+  payload = payload || {};
 
   const message = (payload.message || '').trim();
   const history = Array.isArray(payload.history) ? payload.history : []; // [{role:'user'|'bot', text:'...'}, ...]
 
   if (!message) {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: '질문을 입력해 주세요.' }) };
+    res.status(400).json({ error: '질문을 입력해 주세요.' });
+    return;
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    const errMsg = '서버에 GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Netlify 사이트 설정에서 등록해 주세요.';
+    const errMsg = '서버에 GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Vercel 프로젝트 설정(Settings > Environment Variables)에서 등록해 주세요.';
     await logInteraction(message, errMsg, true);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: errMsg }) };
+    res.status(500).json({ error: errMsg });
+    return;
   }
 
   // 최근 대화 이력을 Gemini 형식으로 변환 (최근 10턴만 유지해 과금/컨텍스트 절약)
@@ -206,9 +224,13 @@ exports.handler = async function (event) {
 
   const contents = [...trimmedHistory, { role: 'user', parts: [{ text: message }] }];
 
-  const callGemini = async () => {
+  // 2.5 계열은 thinkingBudget, 3.x 계열은 thinkingLevel 파라미터를 쓴다.
+  const thinkingFor = (model) =>
+    model.startsWith('gemini-2.') ? { thinkingBudget: 0 } : { thinkingLevel: 'minimal' };
+
+  const callGemini = async (model) => {
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
         method: 'POST',
         headers: {
@@ -221,38 +243,49 @@ exports.handler = async function (event) {
           generationConfig: {
             temperature: 0.3,
             maxOutputTokens: 2048,
-            thinkingConfig: { thinkingLevel: 'minimal' },
+            thinkingConfig: thinkingFor(model),
           },
         }),
       }
     );
-    const data = await resp.json();
-    return { ok: resp.ok, status: resp.status, data };
+    const data = await resp.json().catch(() => ({}));
+    return { ok: resp.ok, status: resp.status, data, model };
   };
 
-  // 구글 서버 혼잡(고수요/503류) 오류는 자주 일시적이므로, 최대 2번까지 짧은 대기 후 재시도한다.
+  // 혼잡(고수요/503류) 오류 판별
   const isOverloaded = (r) => {
     if (r.ok) return false;
     const msg = ((r.data && r.data.error && r.data.error.message) || '').toLowerCase();
-    return r.status === 503 || r.status === 429 || msg.includes('overloaded') || msg.includes('high demand');
+    return r.status === 503 || r.status === 429 || r.status === 500 ||
+      msg.includes('overloaded') || msg.includes('high demand');
   };
+  // 예비 모델 이름이 폐기·변경된 경우(404)에도 다음 모델로 넘어간다.
+  const shouldTryNext = (r) => isOverloaded(r) || r.status === 404;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   try {
-    let result = await callGemini();
-    let attempt = 1;
-    while (isOverloaded(result) && attempt < 3) {
-      await sleep(600 * attempt);
-      result = await callGemini();
-      attempt += 1;
+    // 1) 기본 모델 1회 + 1초 뒤 1회 재시도  2) 그래도 혼잡하면 예비 모델로 전환
+    let result = await callGemini(GEMINI_MODEL);
+    if (isOverloaded(result)) {
+      await sleep(1000);
+      result = await callGemini(GEMINI_MODEL);
+    }
+    for (const fb of FALLBACK_MODELS) {
+      if (!shouldTryNext(result)) break;
+      result = await callGemini(fb);
     }
 
     if (!result.ok) {
-      const msg =
+      const rawMsg =
         (result.data && result.data.error && result.data.error.message) ||
         'Gemini API 호출 중 오류가 발생했습니다.';
-      await logInteraction(message, msg, true);
-      return { statusCode: result.status, headers, body: JSON.stringify({ error: msg }) };
+      // 로그에는 원문 오류를 남기고, 이용자에게는 한국어 안내문을 보여준다.
+      await logInteraction(message, `[${result.model}] ${rawMsg}`, true);
+      const userMsg = isOverloaded(result)
+        ? '현재 이용자가 많아 답변이 지연되고 있습니다. 잠시 후(1~2분 뒤) 다시 질문해 주세요.'
+        : '일시적인 오류로 답변을 드리지 못했습니다. 잠시 후 다시 시도해 주세요.';
+      res.status(result.status).json({ error: userMsg });
+      return;
     }
 
     const answer =
@@ -260,10 +293,10 @@ exports.handler = async function (event) {
       '문의하신 내용과 관련된 자료를 찾을 수 없습니다. 정확한 안내를 위해 KCOC 파트너십지원부(pnd@ngokcoc.or.kr)로 문의해 주세요.';
 
     await logInteraction(message, answer, false);
-    return { statusCode: 200, headers, body: JSON.stringify({ answer }) };
+    res.status(200).json({ answer });
   } catch (err) {
     const errMsg = err.message || '알 수 없는 오류가 발생했습니다.';
     await logInteraction(message, errMsg, true);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: errMsg }) };
+    res.status(500).json({ error: errMsg });
   }
 };
